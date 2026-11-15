@@ -57,8 +57,10 @@ erlang|erl) TARGET=erlang; T='Erlang escript'; EXT=erl; SHEBANG='/usr/bin/env es
 tcl) T=Tcl; EXT=tcl; SHEBANG='/usr/bin/env tclsh' ;;
 awk) T=AWK; EXT=awk; SHEBANG='/usr/bin/env -S awk -f' ;;
 lisp|sbcl) TARGET=lisp; T='Common Lisp'; EXT=lisp; SHEBANG='/usr/bin/env -S sbcl --script' ;;
+scheme|guile|scm) TARGET=scheme; T='Guile Scheme'; EXT=scm; SHEBANG='/usr/bin/env -S guile -s
+!#' ;;
 typescript|ts|deno) TARGET=typescript; T='TypeScript for Deno'; EXT=ts; SHEBANG='/usr/bin/env -S deno run -A' ;;
-*) die "unknown target $TARGET: c c++ rust go zig java kotlin swift dart crystal v odin nim d pascal fortran cobol ocaml haskell | python lua ruby perl javascript typescript php bash sh julia r elixir erlang tcl awk lisp" ;;
+*) die "unknown target $TARGET: c c++ rust go zig java kotlin swift dart crystal v odin nim d pascal fortran cobol ocaml haskell | python lua ruby perl javascript typescript php bash sh julia r elixir erlang tcl awk lisp scheme" ;;
 esac
 [ -n "${INC:-}" ] || INC="use its real $T packages or imports, with their real names,"
 
