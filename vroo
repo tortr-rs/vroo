@@ -2,9 +2,12 @@
 # vroo: the compiler is a claude agent. FILE.vroo goes in, C comes out, cc builds it.
 #   vroo FILE.vroo [-o OUT]    translate and build (the C is kept in .vroo-cache, reused until the source changes)
 #   vroo -c FILE.vroo          print the C, build nothing
-#   vroo make [FILE.vmake]     have the agent turn a .vmake into a build script, show it, run it if you say yes
+#   vroo make [FILE.vmake]     build a project: the .vmake and the files it names go to the agent as one program
+# VROO_UNITS=1 translates a source of more than 40 lines one function at a time, so an edit only re-translates the function it touched. experimental: a small model sometimes writes the same function twice.
 die() { echo "vroo: $*" >&2; exit 1; }
 cache=.vroo-cache
+jobs=4
+mkdir -p "$cache"
 
 ask() { # ask SYSTEM-PROMPT: stdin is what to translate, stdout the answer
 	if [ -n "${VROO_API_URL:-}" ]; then
@@ -29,44 +32,128 @@ strip() { # drop a code fence if the agent wrapped its answer in one
 	sed -e '/^```/d'
 }
 
-SYS_C='You are the compiler for a language called vroo. You are given vroo source and you reply with one C99 program and nothing else: no explanation, no markdown fence. The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the C library. Everyone writes vroo differently and the language has no strict rules, so your job is to guess what the author meant and translate that. Typos, odd spellings, missing braces, loose syntax and names that are never declared are all fine: infer them from the context and from comments (a name like dir_names after a directory was opened means the names in that directory; a comment on a line says what it should do). Fill in what is implied so the program works the way it was clearly meant to. The one thing you must not do is change what the author wrote on purpose: do not drop statements, do not reorder them, do not add features nobody asked for. Never stop with an error: always give a program that builds. When a name or function is not defined, infer from its name and the code around it what it was meant to do; if you really cannot tell, make it do nothing and leave a /* vroo: guessed */ comment there. Output only the C.'
+LOOSE='Everyone writes vroo differently and the language has no strict rules, so your job is to guess what the author meant and translate that. Typos, odd spellings, missing braces, loose syntax and names that are never declared are all fine: infer them from the context and from comments (a name like dir_names after a directory was opened means the names in that directory; a comment on a line says what it should do). Fill in what is implied so the program works the way it was clearly meant to. Some lines are random gibberish typed just for fun, like (d,;j[sys]), only to make the code look real: do not translate them, do not guess what they mean, and do not complain about them, just skip them as if they were not there. The one thing you must not do is change what the author wrote on purpose: do not drop statements, do not reorder them, do not add features nobody asked for. Never stop with an error: always give a program that builds. When a name or function is not defined, infer from its name and the code around it what it was meant to do; if you really cannot tell, make it do nothing and leave a /* vroo: guessed */ comment there.'
 
-SYS_M='You turn a vroo .vmake file into a POSIX sh build script. The .vmake says in a loose syntax what the sources are and what program to build. Use the vroo command to compile .vroo files: vroo FILE.vroo -o OUT. Reply with the script only, no explanation, no markdown fence, and nothing destructive.'
+LANG='The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the C library. A function that starts with "when ..." runs whenever that condition holds, nobody calls it. If the source has no main, write one that runs the top-level when blocks in the order they appear in the file, and keeps looping if one of them waits for keys or input.'
 
-translate() { # translate FILE -> C on stdout, cached by the hash of the source and the prompt
-	f=$1
-	[ -f "$f" ] || die "$f: no such file"
+SYS_C="You are the compiler for a language called vroo. You are given vroo source and you reply with one C99 program and nothing else: no explanation, no markdown fence. $LANG $LOOSE Output only the C."
+
+SYS_P=' The input can be several files, each starting with a line ===== name =====. The first is a .vmake that says what the program is called and which files are its parts; the .vrh files describe what the parts share. All of them together are ONE program: reply with one single C file that has one main, the one the .vmake says.'
+
+SYS_H="You are the compiler for a language called vroo, working on one function at a time. You are given a whole vroo program. Reply with only its C99 preamble: the #includes, type definitions, global variables and small helpers, then a prototype for every function in the source and for main, written with the types you infer. Write NO function bodies at all: every function appears only as a prototype that ends with a semicolon, and the preamble must not contain a single line that opens a function body with a brace. No explanation, no markdown fence. $LANG $LOOSE"
+
+SYS_U="You are the compiler for a language called vroo, working on one function at a time. You are given the C99 preamble that is already written, the whole vroo program for context, and then ONE unit of it to translate. Reply with only the complete C definition of that unit, matching its prototype in the preamble. Do not repeat the preamble and do not write any other function. No explanation, no markdown fence. $LANG $LOOSE"
+
+SYS_N="You are the compiler for a language called vroo, working on one function at a time. You are given the C99 preamble that is already written and the whole vroo program. The program has no main. Reply with only the C definition of int main(int argc, char **argv) that runs the top-level when blocks as described. No explanation, no markdown fence. $LANG"
+
+EXTRA=
+libs() { # libs FILE.c: the link flags for what the C includes
+	grep -q -e '<ncurses.h>' -e '<curses.h>' "$1" && { pkg-config --libs ncursesw 2>/dev/null || pkg-config --libs ncurses 2>/dev/null || echo -lncurses; }
+	grep -q '<math.h>' "$1" && echo -lm
+	grep -q '<pthread.h>' "$1" && echo -pthread
+}
+
+hash() { sha256sum | cut -d' ' -f1; }
+
+# cached SYSTEM-PROMPT FILE-WITH-THE-INPUT OUTPUT: asks unless the answer for this prompt and input is already in the cache
+cached() {
+	k=$( (printf '%s' "$1"; cat "$2") | hash)
+	if [ ! -f "$cache/$k" ]; then
+		ask "$1" < "$2" | strip > "$cache/$k.tmp" || exit 1
+		[ -s "$cache/$k.tmp" ] || die "the agent gave back nothing"
+		mv "$cache/$k.tmp" "$cache/$k"
+	fi
+	cp "$cache/$k" "$3"
+}
+
+# build_c FILE: the C for a whole source on stdout. small sources go in one request, big ones a function at a time
+build_c() {
+	all=$1; sys=$2
 	mkdir -p "$cache"
-	h=$( (printf '%s' "$SYS_C"; cat "$f") | sha256sum | cut -d' ' -f1)
-	if [ -f "$cache/$h.c" ]; then cat "$cache/$h.c"; return; fi
-	ask "$SYS_C" < "$f" | strip > "$cache/$h.c.tmp" || exit 1
-	[ -s "$cache/$h.c.tmp" ] || die "the agent gave back nothing"
-	mv "$cache/$h.c.tmp" "$cache/$h.c"
-	cat "$cache/$h.c"
+	if [ -z "${VROO_UNITS:-}" ] || [ "$(wc -l < "$all")" -le 40 ]; then
+		t=$(mktemp); cached "$sys" "$all" "$t"; cat "$t"; rm -f "$t"
+		return
+	fi
+	tmp=$(mktemp -d)
+	pre=$tmp/pre
+	cached "$SYS_H$EXTRA" "$all" "$pre"
+	if grep -q -e ')[ 	]*{' -e '^[ 	]*{' "$pre"; then # the model wrote bodies into the preamble: give up on units, one request
+		echo "vroo: the preamble came back with function bodies, translating the whole source in one request" >&2
+		rm -rf "$tmp"
+		t=$(mktemp); cached "$sys" "$all" "$t"; cat "$t"; rm -f "$t"
+		return
+	fi
+	# cut the source into units: a unit starts at a line in column 0 once the braces are balanced again
+	awk -v dir="$tmp" '
+		function start(   f) { n++; f = sprintf("%s/u%04d", dir, n); return f }
+		BEGIN { n = 0; depth = 0; out = start() }
+		{
+			line = $0
+			if (depth <= 0 && line ~ /^[^ \t}\/#]/ && n > 0 && seen) { out = start(); seen = 0 }
+			print line > out
+			if (line ~ /^[^ \t}\/#]/) seen = 1
+			c = line; sub(/\/\/.*/, "", c)
+			o = gsub(/{/, "{", c); cl = gsub(/}/, "}", c); depth += o - cl
+		}' "$all"
+	i=0
+	for u in "$tmp"/u*; do
+		grep -q -v -e '^#' -e '^[ 	]*$' -e '^[ 	]*//' "$u" || continue
+		{ echo "===== C PREAMBLE ====="; cat "$pre"; echo; echo "===== WHOLE PROGRAM ====="; cat "$all"; echo; echo "===== TRANSLATE ONLY THIS UNIT ====="; cat "$u"; } > "$u.req"
+		( cached "$SYS_U$EXTRA" "$u.req" "$u.c" ) &
+		i=$((i + 1))
+		[ $((i % jobs)) = 0 ] && wait
+	done
+	wait
+	{
+		cat "$pre"; echo
+		for u in "$tmp"/u*; do [ -f "$u.c" ] && { cat "$u.c"; echo; }; done
+		if ! grep -q 'main *(' "$all"; then
+			{ echo "===== C PREAMBLE ====="; cat "$pre"; echo; echo "===== WHOLE PROGRAM ====="; cat "$all"; } > "$tmp/main.req"
+			cached "$SYS_N$EXTRA" "$tmp/main.req" "$tmp/main.c" && cat "$tmp/main.c"
+		fi
+	}
+	rm -rf "$tmp"
 }
 
 case ${1:-} in
 make)
 	vm=${2:-$(ls ./*.vmake 2>/dev/null | head -1)}
 	[ -f "$vm" ] || die "no .vmake file"
-	script=$(ask "$SYS_M" < "$vm" | strip) || exit 1
-	printf '%s\n\n' "$script"
-	printf 'run this? [y/N] '; read -r a
-	[ "$a" = y ] && printf '%s\n' "$script" | sh
+	dir=$(dirname "$vm")
+	prog=$(sed -n 's/^program *: *//p' "$vm" | head -1)
+	[ -n "$prog" ] || prog=$(basename "$(cd "$dir" && pwd)")
+	# the .vmake names the parts; every .vroo and .vrh in its folder that it mentions goes to the agent with it
+	all=$(mktemp)
+	{
+		echo "===== $(basename "$vm") ====="; cat "$vm"
+		for f in "$dir"/*.vroo "$dir"/*.vrh; do
+			[ -f "$f" ] || continue
+			grep -qF "$(basename "$f")" "$vm" || continue
+			echo; echo "===== $(basename "$f") ====="; cat "$f"
+		done
+	} > "$all"
+	EXTRA=$SYS_P
+	build_c "$all" "$SYS_C$SYS_P" > "$cache/last.c" || exit 1
+	rm -f "$all"
+	cc -Wall -o "$dir/$prog" "$cache/last.c" $(libs "$cache/last.c") || die "cc failed, the C is in $cache/last.c"
+	echo "$dir/$prog"
 	;;
 -c)
-	translate "${2:?usage: vroo -c FILE.vroo}"
+	f=${2:?usage: vroo -c FILE.vroo}
+	[ -f "$f" ] || die "$f: no such file"
+	build_c "$f" "$SYS_C"
 	;;
 '')
 	die "usage: vroo FILE.vroo [-o OUT] | vroo -c FILE.vroo | vroo make [FILE.vmake]"
 	;;
 *)
 	src=$1; shift
+	[ -f "$src" ] || die "$src: no such file"
 	out=${src%.vroo}
 	[ "${1:-}" = -o ] && out=$2
-	c=$(translate "$src") || exit 1
-	printf '%s\n' "$c" > "$cache/last.c"
-	cc -Wall -o "$out" "$cache/last.c" || die "cc failed, the C is in $cache/last.c"
+	mkdir -p "$cache"
+	build_c "$src" "$SYS_C" > "$cache/last.c" || exit 1
+	cc -Wall -o "$out" "$cache/last.c" $(libs "$cache/last.c") || die "cc failed, the C is in $cache/last.c"
 	echo "$out"
 	;;
 esac

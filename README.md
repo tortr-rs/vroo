@@ -1,6 +1,6 @@
 # vroo
 
-vroo is a programming language where the compiler is an AI.
+vroo is a programming language where the compiler is an AI. Think of it as executable pseudocode: it looks like real code, but the details are filled in for you.
 
 You write `.vroo` files in whatever loose, brace-based syntax feels right, with a comment on anything that isn't obvious. `vroo` hands the file to a model, gets C back, and `cc` builds it.
 
@@ -38,10 +38,10 @@ There is no grammar. The comment is the program: if you say what a line should d
 ```
 vroo prog.vroo -o prog     translate and build
 vroo -c prog.vroo          print the C, build nothing
-vroo make [file.vmake]     the agent turns a .vmake into a build script, shows it, asks before running
+vroo make [file.vmake]     build a project: the .vmake and the files it names go to the agent as one program
 ```
 
-File types: `.vroo` is source, `.vrh` is a header, `.vmake` is the build file. `.vmake` is the least tested of the three.
+File types: `.vroo` is source, `.vrh` is a header, `.vmake` is the build file. A `.vmake` says in plain words what the program is called (`program : name`) and which files are its parts. Any `.vroo` or `.vrh` in the folder that it mentions by name is sent along with it, and the whole lot comes back as one C file. `.vmake` is the least tested of the three.
 
 Needs `sh`, `cc`, and either [Claude Code](https://claude.com/claude-code) on your PATH or an API key for any OpenAI-style chat API.
 
