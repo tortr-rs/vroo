@@ -39,9 +39,12 @@ There is no grammar. The comment is the program: if you say what a line should d
 vroo prog.vroo -o prog     translate and build
 vroo -c prog.vroo          print the C, build nothing
 vroo make [file.vmake]     build a project: the .vmake and the files it names go to the agent as one program
+vroo -t rust prog.vroo     translate to another language: c (default), rust, go, python, zig
 ```
 
 File types: `.vroo` is source, `.vrh` is a header, `.vmake` is the build file. A `.vmake` says in plain words what the program is called (`program : name`) and which files are its parts. Any `.vroo` or `.vrh` in the folder that it mentions by name is sent along with it, and the whole lot comes back as one C file. `.vmake` is the least tested of the three.
+
+`-t` picks the language the agent writes. A `.vmake` can say `target : rust` instead, or set `VROO_TARGET`. Each target is built with its own plain toolchain (`rustc`, `go build`, `zig build-exe`; python just gets a shebang), so only programs that stick to the standard library build. A library like raylib works in C, because the agent puts a `/* link: -lraylib */` line at the top and vroo passes it to `cc`, but not in the other languages yet.
 
 Needs `sh`, `cc`, and either [Claude Code](https://claude.com/claude-code) on your PATH or an API key for any OpenAI-style chat API.
 

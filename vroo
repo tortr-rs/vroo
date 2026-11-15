@@ -3,11 +3,31 @@
 #   vroo FILE.vroo [-o OUT]    translate and build (the C is kept in .vroo-cache, reused until the source changes)
 #   vroo -c FILE.vroo          print the C, build nothing
 #   vroo make [FILE.vmake]     build a project: the .vmake and the files it names go to the agent as one program
+#   -t LANG, VROO_TARGET or "target : LANG" in a .vmake picks the language to translate to: c (default), rust, go, python, zig
 # VROO_UNITS=1 translates a source of more than 40 lines one function at a time, so an edit only re-translates the function it touched. experimental: a small model sometimes writes the same function twice.
 die() { echo "vroo: $*" >&2; exit 1; }
 cache=.vroo-cache
 jobs=4
 mkdir -p "$cache"
+
+TARGET=${VROO_TARGET:-c}
+flagged=
+n=$#
+while [ "$n" -gt 0 ]; do
+	a=$1; shift; n=$((n - 1))
+	if [ "$a" = -t ]; then TARGET=${1:?-t needs a language}; flagged=1; shift; n=$((n - 1)); else set -- "$@" "$a"; fi
+done
+case $TARGET in
+c) T=C99; EXT=c
+	INC='use its actual C headers, with the real file names and include paths (for example #include <X11> means <X11/Xlib.h>, <X11/Xutil.h> and <X11/keysym.h>, and #include <ncurses> means <ncurses.h>),'
+	LINKNOTE=' Put one comment on the very first line of the C that lists every linker flag the program needs for the libraries it uses, like /* link: -lraylib -lm */, or /* link: */ if it needs none.' ;;
+rust) T=Rust; EXT=rs ;;
+go) T=Go; EXT=go ;;
+python|py) TARGET=python; T='Python 3'; EXT=py ;;
+zig) T=Zig; EXT=zig ;;
+*) die "unknown target $TARGET (c, rust, go, python, zig)" ;;
+esac
+[ -n "${INC:-}" ] || INC="use its real $T packages or imports, with their real names,"
 
 ask() { # ask SYSTEM-PROMPT: stdin is what to translate, stdout the answer
 	if [ -n "${VROO_API_URL:-}" ]; then
@@ -34,11 +54,11 @@ strip() { # drop a code fence if the agent wrapped its answer in one
 
 LOOSE='Everyone writes vroo differently and the language has no strict rules, so your job is to guess what the author meant and translate that. Typos, odd spellings, missing braces, loose syntax and names that are never declared are all fine: infer them from the context and from comments (a name like dir_names after a directory was opened means the names in that directory; a comment on a line says what it should do). Fill in what is implied so the program works the way it was clearly meant to. Some lines are random gibberish typed just for fun, like (d,;j[sys]), only to make the code look real: do not translate them, do not guess what they mean, and do not complain about them, just skip them as if they were not there. The one thing you must not do is change what the author wrote on purpose: do not drop statements, do not reorder them, do not add features nobody asked for. Never stop with an error: always give a program that builds. When a name or function is not defined, infer from its name and the code around it what it was meant to do; if you really cannot tell, make it do nothing and leave a /* vroo: guessed */ comment there.'
 
-LANG='The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the C library. A function that starts with "when ..." runs whenever that condition holds, nobody calls it. If the source has no main, write one that runs the top-level when blocks in the order they appear in the file, and keeps looping if one of them waits for keys or input.'
+LANG='The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the '"$T"' standard library. Any other #include <name> names a real library: '"$INC"' whatever the vroo include is called.'"$LINKNOTE"' A function that starts with "when ..." runs whenever that condition holds, nobody calls it. If the source has no main, write one that runs the top-level when blocks in the order they appear in the file, and keeps looping if one of them waits for keys or input.'
 
-SYS_C="You are the compiler for a language called vroo. You are given vroo source and you reply with one C99 program and nothing else: no explanation, no markdown fence. $LANG $LOOSE Output only the C."
+SYS_C="You are the compiler for a language called vroo. You are given vroo source and you reply with one $T program and nothing else: no explanation, no markdown fence. $LANG $LOOSE Output only the $T code."
 
-SYS_P=' The input can be several files, each starting with a line ===== name =====. The first is a .vmake that says what the program is called and which files are its parts; the .vrh files describe what the parts share. All of them together are ONE program: reply with one single C file that has one main, the one the .vmake says.'
+SYS_P=' The input can be several files, each starting with a line ===== name =====. The first is a .vmake that says what the program is called and which files are its parts; the .vrh files describe what the parts share. All of them together are ONE program: reply with one single '"$T"' file that has one main, the one the .vmake says.'
 
 SYS_H="You are the compiler for a language called vroo, working on one function at a time. You are given a whole vroo program. Reply with only its C99 preamble: the #includes, type definitions, global variables and small helpers, then a prototype for every function in the source and for main, written with the types you infer. Write NO function bodies at all: every function appears only as a prototype that ends with a semicolon, and the preamble must not contain a single line that opens a function body with a brace. No explanation, no markdown fence. $LANG $LOOSE"
 
@@ -47,10 +67,23 @@ SYS_U="You are the compiler for a language called vroo, working on one function 
 SYS_N="You are the compiler for a language called vroo, working on one function at a time. You are given the C99 preamble that is already written and the whole vroo program. The program has no main. Reply with only the C definition of int main(int argc, char **argv) that runs the top-level when blocks as described. No explanation, no markdown fence. $LANG"
 
 EXTRA=
-libs() { # libs FILE.c: the link flags for what the C includes
+libs() { # libs FILE.c: the link flags the agent asked for, or a guess from the includes
+	l=$(sed -n 's|^/\* *link: *\(.*[^ ]\) *\*/ *$|\1|p' "$1" | tr '\n' ' ')
+	[ -n "$l" ] && { echo "$l"; return; }
 	grep -q -e '<ncurses.h>' -e '<curses.h>' "$1" && { pkg-config --libs ncursesw 2>/dev/null || pkg-config --libs ncurses 2>/dev/null || echo -lncurses; }
+	grep -q '<X11/' "$1" && echo -lX11
 	grep -q '<math.h>' "$1" && echo -lm
 	grep -q '<pthread.h>' "$1" && echo -pthread
+}
+
+finish() { # finish FILE OUT: build what the agent wrote with the toolchain of the target
+	case $TARGET in
+	c) cc -Wall -o "$2" "$1" $(libs "$1") ;;
+	rust) rustc -o "$2" "$1" ;;
+	go) go build -o "$2" "$1" ;;
+	zig) zig build-exe -femit-bin="$2" "$1" ;;
+	python) { echo '#!/usr/bin/env python3'; cat "$1"; } > "$2" && chmod +x "$2" ;;
+	esac || die "$TARGET failed, what the agent wrote is in $1"
 }
 
 hash() { sha256sum | cut -d' ' -f1; }
@@ -70,7 +103,7 @@ cached() {
 build_c() {
 	all=$1; sys=$2
 	mkdir -p "$cache"
-	if [ -z "${VROO_UNITS:-}" ] || [ "$(wc -l < "$all")" -le 40 ]; then
+	if [ -z "${VROO_UNITS:-}" ] || [ "$TARGET" != c ] || [ "$(wc -l < "$all")" -le 40 ]; then
 		t=$(mktemp); cached "$sys" "$all" "$t"; cat "$t"; rm -f "$t"
 		return
 	fi
@@ -132,10 +165,14 @@ make)
 			echo; echo "===== $(basename "$f") ====="; cat "$f"
 		done
 	} > "$all"
+	if [ -z "$flagged" ]; then # a "target : lang" line in the .vmake, unless -t was given
+		t=$(sed -n 's/^target *: *//p' "$vm" | head -1)
+		[ -n "$t" ] && [ "$t" != "$TARGET" ] && { rm -f "$all"; exec "$0" -t "$t" make "$vm"; }
+	fi
 	EXTRA=$SYS_P
-	build_c "$all" "$SYS_C$SYS_P" > "$cache/last.c" || exit 1
+	build_c "$all" "$SYS_C$SYS_P" > "$cache/last.$EXT" || exit 1
 	rm -f "$all"
-	cc -Wall -o "$dir/$prog" "$cache/last.c" $(libs "$cache/last.c") || die "cc failed, the C is in $cache/last.c"
+	finish "$cache/last.$EXT" "$dir/$prog"
 	echo "$dir/$prog"
 	;;
 -c)
@@ -152,8 +189,8 @@ make)
 	out=${src%.vroo}
 	[ "${1:-}" = -o ] && out=$2
 	mkdir -p "$cache"
-	build_c "$src" "$SYS_C" > "$cache/last.c" || exit 1
-	cc -Wall -o "$out" "$cache/last.c" $(libs "$cache/last.c") || die "cc failed, the C is in $cache/last.c"
+	build_c "$src" "$SYS_C" > "$cache/last.$EXT" || exit 1
+	finish "$cache/last.$EXT" "$out"
 	echo "$out"
 	;;
 esac
