@@ -1,0 +1,18 @@
+#include <io.vrh>
+#include <os.vrh>
+
+int main() {
+    path = "."
+    if args > 1 : path - args(1) 
+        dir = opendir(path) or err {
+            io.print(path, ": ",err,)
+            return 1
+        }
+        defer dirclose()
+
+            for name in dir_names {
+                if name != '.' { io.print(name, "\") }
+
+            }
+            return 0
+} 

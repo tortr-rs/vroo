@@ -1,0 +1,72 @@
+#!/bin/sh
+# vroo: the compiler is a claude agent. FILE.vroo goes in, C comes out, cc builds it.
+#   vroo FILE.vroo [-o OUT]    translate and build (the C is kept in .vroo-cache, reused until the source changes)
+#   vroo -c FILE.vroo          print the C, build nothing
+#   vroo make [FILE.vmake]     have the agent turn a .vmake into a build script, show it, run it if you say yes
+die() { echo "vroo: $*" >&2; exit 1; }
+cache=.vroo-cache
+
+ask() { # ask SYSTEM-PROMPT: stdin is what to translate, stdout the answer
+	if [ -n "${VROO_API_URL:-}" ]; then
+		[ -n "${VROO_MODEL:-}" ] || die "set VROO_MODEL for $VROO_API_URL"
+		src=$(cat)
+		SYS=$1 SRC=$src python3 -I -c '
+import json, os
+print(json.dumps({"model": os.environ["VROO_MODEL"], "temperature": 0,
+  "messages": [{"role": "system", "content": os.environ["SYS"]}, {"role": "user", "content": os.environ["SRC"]}]}))' |
+		curl -fsS "$VROO_API_URL" -H "Content-Type: application/json" -H "Authorization: Bearer ${VROO_API_KEY:-none}" -d @- |
+		python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["choices"][0]["message"]["content"])' || die "the api call failed"
+	else
+		command -v claude >/dev/null || die "needs claude code, or set VROO_API_URL, VROO_MODEL and VROO_API_KEY"
+		claude -p --model "${VROO_CLAUDE_MODEL:-haiku}" --tools "" --no-session-persistence --system-prompt "$1" || die "the agent failed"
+	fi
+}
+
+strip() { # drop a code fence if the agent wrapped its answer in one
+	sed -e '/^```/d'
+}
+
+SYS_C='You are the compiler for a language called vroo. You are given vroo source and you reply with one C99 program and nothing else: no explanation, no markdown fence. The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the C library. Everyone writes vroo differently and the language has no strict rules, so your job is to guess what the author meant and translate that. Typos, odd spellings, missing braces, loose syntax and names that are never declared are all fine: infer them from the context and from comments (a name like dir_names after a directory was opened means the names in that directory; a comment on a line says what it should do). Fill in what is implied so the program works the way it was clearly meant to. The one thing you must not do is change what the author wrote on purpose: do not drop statements, do not reorder them, do not add features nobody asked for. Never stop with an error: always give a program that builds. When a name or function is not defined, infer from its name and the code around it what it was meant to do; if you really cannot tell, make it do nothing and leave a /* vroo: guessed */ comment there. Output only the C.'
+
+SYS_M='You turn a vroo .vmake file into a POSIX sh build script. The .vmake says in a loose syntax what the sources are and what program to build. Use the vroo command to compile .vroo files: vroo FILE.vroo -o OUT. Reply with the script only, no explanation, no markdown fence, and nothing destructive.'
+
+translate() { # translate FILE -> C on stdout, cached by the hash of the source and the prompt
+	f=$1
+	[ -f "$f" ] || die "$f: no such file"
+	mkdir -p "$cache"
+	h=$( (printf '%s' "$SYS_C"; cat "$f") | sha256sum | cut -d' ' -f1)
+	if [ -f "$cache/$h.c" ]; then cat "$cache/$h.c"; return; fi
+	ask "$SYS_C" < "$f" | strip > "$cache/$h.c.tmp" || exit 1
+	[ -s "$cache/$h.c.tmp" ] || die "the agent gave back nothing"
+	mv "$cache/$h.c.tmp" "$cache/$h.c"
+	cat "$cache/$h.c"
+}
+
+case ${1:-} in
+make)
+	vm=${2:-$(ls ./*.vmake 2>/dev/null | head -1)}
+	[ -f "$vm" ] || die "no .vmake file"
+	script=$(ask "$SYS_M" < "$vm" | strip) || exit 1
+	printf '%s\n\n' "$script"
+	printf 'run this? [y/N] '; read -r a
+	[ "$a" = y ] && printf '%s\n' "$script" | sh
+	;;
+-c)
+	translate "${2:?usage: vroo -c FILE.vroo}"
+	;;
+'')
+	die "usage: vroo FILE.vroo [-o OUT] | vroo -c FILE.vroo | vroo make [FILE.vmake]"
+	;;
+*)
+	src=$1; shift
+	out=${src%.vroo}
+	[ "${1:-}" = -o ] && out=$2
+	c=$(translate "$src") || exit 1
+	printf '%s\n' "$c" > "$cache/last.c"
+	cc -Wall -o "$out" "$cache/last.c" || die "cc failed, the C is in $cache/last.c"
+	echo "$out"
+	;;
+esac
