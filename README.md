@@ -33,6 +33,17 @@ int horizontal(names) {
 
 There is no grammar. The comment is the program: if you say what a line should do, that's what you get. If you don't, the model guesses the smallest thing, usually nothing, and leaves `/* vroo: guessed */` in the C so you can find it.
 
+## Install
+
+It's one shell script. Put it somewhere on your PATH:
+
+```
+git clone https://github.com/tortr-rs/vroo
+sudo install -m 755 vroo/vroo /usr/local/bin/vroo
+```
+
+Without root, copy it to `~/.local/bin/vroo` instead. Then `vroo` works from any folder.
+
 ## Use
 
 ```
