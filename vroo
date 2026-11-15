@@ -208,12 +208,16 @@ make)
 	prog=$(sed -n 's/^program *: *//p' "$vm" | head -1)
 	[ -n "$prog" ] || prog=$(basename "$(cd "$dir" && pwd)")
 	# the .vmake names the parts; every .vroo and .vrh in its folder that it mentions goes to the agent with it
+	# a .vmake that names no file, or says "all the files" or "everything", takes every one in the folder
+	everything=1
+	for f in "$dir"/*.vroo "$dir"/*.vrh; do [ -f "$f" ] && grep -qF "$(basename "$f")" "$vm" && everything=; done
+	grep -qi -E 'all( the)? files|every ?file|everything' "$vm" && everything=1
 	all=$(mktemp)
 	{
 		echo "===== $(basename "$vm") ====="; cat "$vm"
 		for f in "$dir"/*.vroo "$dir"/*.vrh; do
 			[ -f "$f" ] || continue
-			grep -qF "$(basename "$f")" "$vm" || continue
+			[ -n "$everything" ] || grep -qF "$(basename "$f")" "$vm" || continue
 			echo; echo "===== $(basename "$f") ====="; cat "$f"
 		done
 	} > "$all"
@@ -225,7 +229,19 @@ make)
 	build_c "$all" "$SYS_C$SYS_P" > "$cache/last.$EXT" || exit 1
 	rm -f "$all"
 	finish "$cache/last.$EXT" "$dir/$prog"
-	echo "$dir/$prog"
+	# "install : DIR" or "install to DIR" copies the finished program there
+	inst=$(sed -n 's/^install *: *//p' "$vm" | head -1)
+	[ -n "$inst" ] || inst=$(sed -n 's/.*install \(to\|into\) \([^ ]*\).*/\2/p' "$vm" | head -1)
+	case $inst in "~"*) inst=$HOME${inst#"~"};; esac
+	if [ -n "$inst" ]; then
+		mkdir -p "$inst" || die "cannot make $inst"
+		for x in "$dir/$prog" "$dir/$prog.d" "$dir/$prog.jar"; do
+			if [ -e "$x" ]; then cp -R "$x" "$inst/" || die "cannot copy $x to $inst"; fi
+		done
+		echo "$inst/$prog"
+	else
+		echo "$dir/$prog"
+	fi
 	;;
 -c)
 	f=${2:?usage: vroo -c FILE.vroo}
