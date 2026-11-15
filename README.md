@@ -39,7 +39,7 @@ There is no grammar. The comment is the program: if you say what a line should d
 vroo prog.vroo -o prog     translate and build
 vroo -c prog.vroo          print the C, build nothing
 vroo make [file.vmake]     build a project: the .vmake and the files it names go to the agent as one program
-vroo -t rust prog.vroo     translate to another language (c by default, 36 in all, list below)
+vroo -t rust prog.vroo     translate to another language (c by default, 35 in all, list below)
 ```
 
 File types: `.vroo` is source, `.vrh` is a header, `.vmake` is the build file. A `.vmake` says in plain words what the program is called (`program : name`) and which files are its parts. Any `.vroo` or `.vrh` in the folder that it mentions by name is sent along with it, and the whole lot comes back as one C file. `.vmake` is the least tested of the three.
