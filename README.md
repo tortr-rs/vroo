@@ -39,12 +39,12 @@ There is no grammar. The comment is the program: if you say what a line should d
 vroo prog.vroo -o prog     translate and build
 vroo -c prog.vroo          print the C, build nothing
 vroo make [file.vmake]     build a project: the .vmake and the files it names go to the agent as one program
-vroo -t rust prog.vroo     translate to another language: c (default), rust, go, python, zig
+vroo -t rust prog.vroo     translate to another language (c by default, 36 in all, list below)
 ```
 
 File types: `.vroo` is source, `.vrh` is a header, `.vmake` is the build file. A `.vmake` says in plain words what the program is called (`program : name`) and which files are its parts. Any `.vroo` or `.vrh` in the folder that it mentions by name is sent along with it, and the whole lot comes back as one C file. `.vmake` is the least tested of the three.
 
-`-t` picks the language the agent writes. A `.vmake` can say `target : rust` instead, or set `VROO_TARGET`. Each target is built with its own plain toolchain (`rustc`, `go build`, `zig build-exe`; python just gets a shebang), so only programs that stick to the standard library build. A library like raylib works in C, because the agent puts a `/* link: -lraylib */` line at the top and vroo passes it to `cc`, but not in the other languages yet.
+`-t` picks the language the agent writes: c, c++, rust, go, zig, java, kotlin, swift, dart, crystal, v, odin, nim, d, pascal, fortran, cobol, ocaml, haskell, and the scripting ones python, lua, ruby, perl, javascript, typescript (deno), php, bash, sh, julia, r, elixir, erlang, tcl, awk and lisp (sbcl). Only the ones whose toolchain is installed will build. Tested: c, c++, rust, go, python, lua, ruby, perl, bash, fortran, awk, typescript. A `.vmake` can say `target : rust` instead, or set `VROO_TARGET`. Each target is built with its own plain toolchain (`rustc`, `go build`, `c++`, `gfortran`, `ghc` and so on; the scripting languages just get a shebang), so only programs that stick to the standard library build. A library like raylib works in C, because the agent puts a `/* link: -lraylib */` line at the top and vroo passes it to `cc`, but not in the other languages yet.
 
 Needs `sh`, `cc`, and either [Claude Code](https://claude.com/claude-code) on your PATH or an API key for any OpenAI-style chat API.
 

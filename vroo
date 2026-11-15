@@ -21,11 +21,44 @@ case $TARGET in
 c) T=C99; EXT=c
 	INC='use its actual C headers, with the real file names and include paths (for example #include <X11> means <X11/Xlib.h>, <X11/Xutil.h> and <X11/keysym.h>, and #include <ncurses> means <ncurses.h>),'
 	LINKNOTE=' Put one comment on the very first line of the C that lists every linker flag the program needs for the libraries it uses, like /* link: -lraylib -lm */, or /* link: */ if it needs none.' ;;
+cpp|c++) TARGET=cpp; T=C++17; EXT=cpp
+	INC='use its actual C++ or C headers, with the real file names and include paths (for example #include <X11> means <X11/Xlib.h>, <X11/Xutil.h> and <X11/keysym.h>),'
+	LINKNOTE=' Put one comment on the very first line that lists every linker flag the program needs for the libraries it uses, like /* link: -lraylib -lm */, or /* link: */ if it needs none.' ;;
 rust) T=Rust; EXT=rs ;;
 go) T=Go; EXT=go ;;
-python|py) TARGET=python; T='Python 3'; EXT=py ;;
+python|py) TARGET=python; T='Python 3'; EXT=py; SHEBANG='/usr/bin/env python3' ;;
+lua) T=Lua; EXT=lua; SHEBANG='/usr/bin/env lua' ;;
+ruby|rb) TARGET=ruby; T=Ruby; EXT=rb; SHEBANG='/usr/bin/env ruby' ;;
+perl|pl) TARGET=perl; T=Perl; EXT=pl; SHEBANG='/usr/bin/env perl' ;;
+javascript|js|node) TARGET=javascript; T='JavaScript for Node.js'; EXT=js; SHEBANG='/usr/bin/env node' ;;
+php) T=PHP; EXT=php; SHEBANG='/usr/bin/env php' ;;
+bash) T=Bash; EXT=sh; SHEBANG='/usr/bin/env bash' ;;
+sh|shell) TARGET=shell; T='POSIX sh'; EXT=sh; SHEBANG='/bin/sh' ;;
 zig) T=Zig; EXT=zig ;;
-*) die "unknown target $TARGET (c, rust, go, python, zig)" ;;
+fortran|f90) TARGET=fortran; T='Fortran 2018'; EXT=f90 ;;
+ocaml|ml) TARGET=ocaml; T=OCaml; EXT=ml ;;
+haskell|hs) TARGET=haskell; T=Haskell; EXT=hs ;;
+nim) T=Nim; EXT=nim ;;
+d) T=D; EXT=d ;;
+swift) T=Swift; EXT=swift ;;
+java) T=Java; EXT=java
+	LINKNOTE=' The one public class must be called Main, with the main method in it.' ;;
+kotlin|kt) TARGET=kotlin; T=Kotlin; EXT=kt ;;
+dart) T=Dart; EXT=dart ;;
+crystal|cr) TARGET=crystal; T=Crystal; EXT=cr ;;
+v) T='V'; EXT=v ;;
+odin) T=Odin; EXT=odin ;;
+pascal|pas) TARGET=pascal; T='Free Pascal'; EXT=pas ;;
+cobol|cob) TARGET=cobol; T='COBOL (free format)'; EXT=cob ;;
+julia|jl) TARGET=julia; T=Julia; EXT=jl; SHEBANG='/usr/bin/env julia' ;;
+r) T=R; EXT=R; SHEBANG='/usr/bin/env Rscript' ;;
+elixir|exs) TARGET=elixir; T='Elixir script'; EXT=exs; SHEBANG='/usr/bin/env elixir' ;;
+erlang|erl) TARGET=erlang; T='Erlang escript'; EXT=erl; SHEBANG='/usr/bin/env escript' ;;
+tcl) T=Tcl; EXT=tcl; SHEBANG='/usr/bin/env tclsh' ;;
+awk) T=AWK; EXT=awk; SHEBANG='/usr/bin/env -S awk -f' ;;
+lisp|sbcl) TARGET=lisp; T='Common Lisp'; EXT=lisp; SHEBANG='/usr/bin/env -S sbcl --script' ;;
+typescript|ts|deno) TARGET=typescript; T='TypeScript for Deno'; EXT=ts; SHEBANG='/usr/bin/env -S deno run -A' ;;
+*) die "unknown target $TARGET: c c++ rust go zig java kotlin swift dart crystal v odin nim d pascal fortran cobol ocaml haskell | python lua ruby perl javascript typescript php bash sh julia r elixir erlang tcl awk lisp" ;;
 esac
 [ -n "${INC:-}" ] || INC="use its real $T packages or imports, with their real names,"
 
@@ -54,7 +87,7 @@ strip() { # drop a code fence if the agent wrapped its answer in one
 
 LOOSE='Everyone writes vroo differently and the language has no strict rules, so your job is to guess what the author meant and translate that. Typos, odd spellings, missing braces, loose syntax and names that are never declared are all fine: infer them from the context and from comments (a name like dir_names after a directory was opened means the names in that directory; a comment on a line says what it should do). Fill in what is implied so the program works the way it was clearly meant to. Some lines are random gibberish typed just for fun, like (d,;j[sys]), only to make the code look real: do not translate them, do not guess what they mean, and do not complain about them, just skip them as if they were not there. The one thing you must not do is change what the author wrote on purpose: do not drop statements, do not reorder them, do not add features nobody asked for. Never stop with an error: always give a program that builds. When a name or function is not defined, infer from its name and the code around it what it was meant to do; if you really cannot tell, make it do nothing and leave a /* vroo: guessed */ comment there.'
 
-LANG='The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the '"$T"' standard library. Any other #include <name> names a real library: '"$INC"' whatever the vroo include is called.'"$LINKNOTE"' A function that starts with "when ..." runs whenever that condition holds, nobody calls it. If the source has no main, write one that runs the top-level when blocks in the order they appear in the file, and keeps looping if one of them waits for keys or input.'
+LANG='The syntax is loose and braces based. Variables are untyped in the source, so infer their types. "or err { ... }" after a call that can fail is the failure branch and err holds the error text. "defer f()" runs f when the function returns. "for x in xs { }" loops over a list. io.print joins its arguments and writes them to stdout; it is vroo'"'"'s own name, so use the real way of printing in '"$T"', never a function called io.print. #include <name.vrh> pulls in a vroo header; for the standard ones (io, os) use the '"$T"' standard library. Any other #include <name> names a real library: '"$INC"' whatever the vroo include is called.'"$LINKNOTE"' A function that starts with "when ..." runs whenever that condition holds, nobody calls it. If the source has no main, write one that runs the top-level when blocks in the order they appear in the file, and keeps looping if one of them waits for keys or input.'
 
 SYS_C="You are the compiler for a language called vroo. You are given vroo source and you reply with one $T program and nothing else: no explanation, no markdown fence. $LANG $LOOSE Output only the $T code."
 
@@ -82,7 +115,26 @@ finish() { # finish FILE OUT: build what the agent wrote with the toolchain of t
 	rust) rustc -o "$2" "$1" ;;
 	go) go build -o "$2" "$1" ;;
 	zig) zig build-exe -femit-bin="$2" "$1" ;;
-	python) { echo '#!/usr/bin/env python3'; cat "$1"; } > "$2" && chmod +x "$2" ;;
+	cpp) c++ -std=c++17 -Wall -o "$2" "$1" $(libs "$1") ;;
+	fortran) gfortran -o "$2" "$1" ;;
+	ocaml) ocamlfind ocamlopt -o "$2" "$1" ;;
+	haskell) ghc -o "$2" "$1" ;;
+	nim) nim c -o:"$2" "$1" ;;
+	d) ldc2 -of="$2" "$1" ;;
+	swift) swiftc -o "$2" "$1" ;;
+	java) # a class called Main in Main.java, the program is a script that runs it
+		mkdir -p "$2.d" && cp "$1" "$2.d/Main.java" && javac -d "$2.d" "$2.d/Main.java" &&
+		printf '#!/bin/sh\nexec java -cp "%s" Main "$@"\n' "$(cd "$2.d" && pwd)" > "$2" && chmod +x "$2" ;;
+	kotlin) kotlinc "$1" -include-runtime -d "$2.jar" &&
+		printf '#!/bin/sh\nexec java -jar "%s" "$@"\n' "$(cd "$(dirname "$2.jar")" && pwd)/$(basename "$2.jar")" > "$2" && chmod +x "$2" ;;
+	dart) dart compile exe "$1" -o "$2" ;;
+	crystal) crystal build "$1" -o "$2" ;;
+	v) v -o "$2" "$1" ;;
+	odin) odin build "$1" -file -out:"$2" ;;
+	pascal) fpc -o"$2" "$1" ;;
+	cobol) cobc -x -free -o "$2" "$1" ;;
+	*) # the scripting languages: the program is the script, with a shebang on top
+		{ echo "#!$SHEBANG"; cat "$1"; } > "$2" && chmod +x "$2" ;;
 	esac || die "$TARGET failed, what the agent wrote is in $1"
 }
 
