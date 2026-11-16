@@ -81,10 +81,6 @@ export VROO_API_KEY=...
 
 Other URLs: `https://api.openai.com/v1/chat/completions`, `https://api.moonshot.ai/v1/chat/completions`, `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` for Gemini, `https://openrouter.ai/api/v1/chat/completions`, and `http://localhost:11434/v1/chat/completions` for a local Ollama. The key is read from the environment and never written anywhere. This route needs `curl` and `python3`.
 
-## Don't
-
-Don't write a kernel in it, or anything that has to be bit-exact. A wrong guess there doesn't give wrong output, it hangs the machine. It's fine for tools, sketches and trying out ideas for syntax.
-
 ## License
 
 ISC.
